@@ -1,176 +1,78 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BALANCE } from '../src/game/config';
-import { attackAt, buy, canWin, mount, relocate, closestPart, compatible, copyRun, eat, grow, move, mouthAt, newRun, partPosition, place, protection, remove, stats, usedCapacity } from '../src/game/model';
-import { clearRun, loadRun, saveRun, validRun } from '../src/game/storage';
-import { anchor, propulsion, tailPoints } from '../src/game/anatomy';
-import { Spatial } from '../src/game/spatial';
-describe('Dietas y colisiones locales',()=>{
-  it('acepta únicamente alimentos compatibles con cada boca',()=>{
-    expect(compatible('gather','algae')).toBe(true);expect(compatible('jaw','remains')).toBe(true);expect(compatible('filter','particle')).toBe(true);
-    for(const p of ['gather','jaw','filter','plate','spike','flagellum'] as const)for(const f of ['algae','remains','particle'] as const)
-      expect(compatible(p,f)).toBe((p==='gather'&&f==='algae')||(p==='jaw'&&f==='remains')||(p==='filter'&&f==='particle'));
-  });
-  it('gira la zona de alimentación con el cuerpo, sin consumir por detrás',()=>{
-    const p=newRun().parts;
-    expect(mouthAt(p,0,0,0,20,{x:25,y:0,kind:'algae',radius:4})).toBe(true);
-    expect(mouthAt(p,0,0,0,20,{x:-25,y:0,kind:'algae',radius:4})).toBe(false);
-    expect(mouthAt(p,0,0,Math.PI,20,{x:-25,y:0,kind:'algae',radius:4})).toBe(true);
-    expect(mouthAt(p,0,0,0,20,{x:25,y:0,kind:'remains',radius:4})).toBe(false);
-  });
-  it('filtra a corta distancia desde la parte, no desde todo el cuerpo',()=>{
-    const p=newRun().parts;p[0]='filter';
-    expect(mouthAt(p,0,0,0,20,{x:40,y:0,kind:'particle',radius:2})).toBe(true);
-    expect(mouthAt(p,0,0,0,20,{x:-40,y:0,kind:'particle',radius:2})).toBe(false);
-  });
-  it('transforma los ocho puntos locales respecto a la orientación',()=>{
-    expect(partPosition(0,0,Math.PI/2,20,0).y).toBeCloseTo(21.2);
-    expect(partPosition(0,0,0,20,4).x).toBeCloseTo(-21.2);
-  });
+import {describe,it,expect,beforeEach,vi} from 'vitest';
+import {BALANCE,PARTS,SPECIES,SPECIES_KEYS,speciesLoadout,type PartKind} from '../src/game/config';
+import {anchor,bodyRadius,DEFAULT_ANGLES,ORGAN_SLOTS,profileFor,profileMass,validProfile,validEyes,widthAt,propulsion,tailPoints} from '../src/game/anatomy';
+import {attackAt,buy,canWin,compatible,copyRun,eat,grow,groupSlots,isSymmetric,maxHealth,mount,mouthAt,newRun,organContacts,partPosition,placementAngles,protection,relocate,remove,setProfile,stats,usedCapacity} from '../src/game/model';
+import {ContactTools,type ContactActor} from '../src/game/combat';
+import {clearRun,loadRun,saveRun,validRun,migrateRun} from '../src/game/storage';
+import {Spatial} from '../src/game/spatial';
+import {fruitPosition} from '../src/game/plants';
+describe('Simetría obligatoria y conjuntos',()=>{
+  it('coloca un órgano al frente o en la cola y dos en los lados',()=>{expect(placementAngles(.05)).toEqual([0]);expect(placementAngles(Math.PI-.04)).toEqual([Math.PI]);expect(placementAngles(-.7)).toEqual([.7,-.7]);});
+  it('cada par compra un conjunto pero usa dos órganos de capacidad',()=>{const r=newRun();r.points=6;expect(mount(r,'jaw',.7).ok).toBe(true);expect(r.points).toBe(3);expect(usedCapacity(r.parts)).toBe(4);expect(r.parts.filter(p=>p==='jaw')).toHaveLength(2);expect(isSymmetric(r.parts,r.angles)).toBe(true);});
+  it('no hay opción de colocar una sola adaptación lateral',()=>{const r=newRun();r.points=6;mount(r,'spike',.8,false);expect(r.parts.filter(p=>p==='spike')).toHaveLength(2);expect(isSymmetric(r.parts,r.angles)).toBe(true);});
+  it('rechaza saldo insuficiente sin cobrar ni retirar la boca',()=>{const r=newRun();r.points=2;const before=copyRun(r);expect(mount(r,'jaw',0).ok).toBe(false);expect(r).toEqual(before);});
+  it('reemplaza un conjunto completo y devuelve el anterior a reserva',()=>{const r=newRun();r.points=12;mount(r,'spike',.8);mount(r,'plate',.8);expect(r.inventory.spike).toBe(1);expect(r.parts.filter(p=>p==='spike')).toHaveLength(0);expect(r.parts.filter(p=>p==='plate')).toHaveLength(2);expect(r.points).toBe(8);});
+  it('retirar cualquiera de los lados retira el par entero',()=>{const r=newRun();r.points=6;mount(r,'jaw',.7);const slot=r.parts.indexOf('jaw');expect(groupSlots(r,slot)).toHaveLength(2);expect(remove(r,slot)).toBe(true);expect(r.inventory.jaw).toBe(1);expect(r.parts.filter(p=>p==='jaw')).toHaveLength(0);expect(mount(r,'jaw',1.4).ok).toBe(true);expect(r.points).toBe(3);});
+  it('mover de un eje a un lateral es gratis y crea el espejo',()=>{const r=newRun();expect(relocate(r,0,.65)).toBe(true);expect(r.points).toBe(0);expect(r.parts.filter(p=>p==='gather')).toHaveLength(2);expect(isSymmetric(r.parts,r.angles)).toBe(true);});
+  it('mover un par al eje lo reúne en un solo órgano',()=>{const r=newRun();relocate(r,0,.65);const slot=r.parts.indexOf('gather');relocate(r,slot,0);expect(r.parts.filter(p=>p==='gather')).toHaveLength(1);expect(usedCapacity(r.parts)).toBe(2);expect(r.inventory.gather).toBe(0);});
+  it('rechaza expandir una adaptación si no cabe su espejo',()=>{const r=newRun();r.points=12;mount(r,'spike',.8);mount(r,'plate',1.6);expect(usedCapacity(r.parts)).toBe(6);const before=copyRun(r);expect(relocate(r,0,.38)).toBe(false);expect(r).toEqual(before);});
+  it('recolocar un lateral mantiene el espejo exacto',()=>{const r=newRun();r.points=6;mount(r,'jaw',.65);relocate(r,r.parts.indexOf('jaw'),1.35);const angles=r.parts.flatMap((p,i)=>p==='jaw'?[r.angles[i]]:[]);expect(angles).toEqual([1.35,-1.35]);});
+  it('la capacidad y la reserva no cambian al rechazar una compra',()=>{const r=newRun();r.points=12;mount(r,'plate',.8);mount(r,'spike',1.6);const before=copyRun(r);expect(mount(r,'jet',2.3).ok).toBe(false);expect(r).toEqual(before);});
+  it('cancelar una copia restaura forma, ojos, inventario y puntos',()=>{const r=newRun();r.points=8;const draft=copyRun(r);mount(draft,'jaw',.7);draft.profile.widths[2]=.45;draft.eyes.kind='stalk';expect(r.parts.filter(p=>p==='jaw')).toHaveLength(0);expect(r.profile.widths[2]).toBe(1);expect(r.eyes.kind).toBe('orb');expect(r.points).toBe(8);});
+  it('comprar un módulo suelto sigue respetando el saldo',()=>{const r=newRun();expect(buy(r,'electric')).toBe(false);r.points=4;expect(buy(r,'electric')).toBe(true);expect(r.inventory.electric).toBe(1);expect(r.points).toBe(0);});
 });
-describe('Combate por sectores',()=>{
-  it('una mandíbula frontal no ataca la espalda',()=>{
-    const p=newRun().parts;p[0]='jaw';
-    expect(attackAt(p,0,0,0,20,{x:36,y:0,radius:15})).toBe(BALANCE.attackDamage);
-    expect(attackAt(p,0,0,0,20,{x:-36,y:0,radius:15})).toBe(0);
-  });
-  it('un pincho trasero castiga al perseguidor',()=>{
-    const p=newRun().parts;p[4]='spike';
-    expect(attackAt(p,0,0,0,20,{x:-36,y:0,radius:15})).toBe(BALANCE.spikeDamage);
-    expect(attackAt(p,0,0,0,20,{x:36,y:0,radius:15})).toBe(0);
-  });
-  it('las placas protegen únicamente su sector y siguen el giro',()=>{
-    const p=newRun().parts;p[2]='plate';
-    expect(protection(p,0,Math.PI/2)).toBeCloseTo(.35);expect(protection(p,0,-Math.PI/2)).toBe(1);
-    expect(protection(p,Math.PI/2,Math.PI)).toBeCloseTo(.35);
-    expect(protection(p,0,Math.PI/2+.7)).toBe(1);
-  });
-  it('varias mandíbulas no acumulan daño en un mismo contacto',()=>{
-    const p=newRun().parts;p[0]='jaw';p[1]='jaw';p[7]='jaw';
-    expect(attackAt(p,0,0,0,20,{x:30,y:0,radius:25})).toBe(BALANCE.attackDamage);
-  });
+describe('Dieta y combate local',()=>{
+  it('solo cada boca consume su alimento compatible',()=>{for(const p of Object.keys(PARTS) as PartKind[])for(const f of ['algae','particle','remains'] as const)expect(compatible(p,f)).toBe(p==='gather'&&f==='algae'||p==='filter'&&f==='particle'||p==='jaw'&&f==='remains');});
+  it('la boca frontal no come por detrás ni carne',()=>{const r=newRun();expect(mouthAt(r.parts,0,0,0,20,{x:25,y:0,kind:'algae',radius:4})).toBe(true);expect(mouthAt(r.parts,0,0,0,20,{x:-25,y:0,kind:'algae',radius:4})).toBe(false);expect(mouthAt(r.parts,0,0,0,20,{x:25,y:0,kind:'remains',radius:4})).toBe(false);});
+  it('la alimentación gira junto con la criatura',()=>{const r=newRun();expect(mouthAt(r.parts,0,0,Math.PI,20,{x:-25,y:0,kind:'algae',radius:4})).toBe(true);});
+  it('el filtrado se centra en el órgano, no en toda la célula',()=>{const r=newRun();r.parts[0]='filter';expect(mouthAt(r.parts,0,0,0,20,{x:40,y:0,kind:'particle',radius:2})).toBe(true);expect(mouthAt(r.parts,0,0,0,20,{x:-40,y:0,kind:'particle',radius:2})).toBe(false);});
+  it('mandíbulas frontales y pinchos traseros atacan sus posiciones',()=>{const r=newRun();r.parts[0]='jaw';r.parts[4]='spike';expect(attackAt(r.parts,0,0,0,20,{x:36,y:0,radius:15})).toBe(BALANCE.attackDamage);expect(attackAt(r.parts,0,0,0,20,{x:-36,y:0,radius:15})).toBe(BALANCE.spikeDamage);});
+  it('varias mandíbulas no suman daño infinito',()=>{const r=newRun();r.parts[0]='jaw';r.parts[1]='jaw';r.parts[7]='jaw';expect(attackAt(r.parts,0,0,0,20,{x:30,y:0,radius:25})).toBe(BALANCE.attackDamage);});
+  it('la armadura protege solo su sector y se mantiene al girar',()=>{const r=newRun();r.parts[2]='plate';expect(protection(r.parts,0,Math.PI/2,r.angles)).toBeCloseTo(.35);expect(protection(r.parts,0,-Math.PI/2,r.angles)).toBe(1);expect(protection(r.parts,Math.PI/2,Math.PI,r.angles)).toBeCloseTo(.35);});
+  it('las zonas montadas coinciden con la membrana esculpida',()=>{const r=newRun();r.profile.length=3.5;r.profile.widths[2]=.5;r.angles[0]=.8;const pos=partPosition(0,0,0,20,0,r.angles,r.shape,r.profile),expected=anchor(.8,20,r.shape,r.profile);expect(pos.x).toBeCloseTo(expected.x);expect(pos.y).toBeCloseTo(expected.y);expect(mouthAt(r.parts,0,0,0,20,{x:pos.x,y:pos.y,kind:'algae',radius:4},r.angles,r.shape,r.profile)).toBe(true);});
+  it('los órganos eléctricos no contactan detrás si están al frente',()=>{const r=newRun();r.parts[0]='electric';expect(organContacts(r.parts,'electric',0,0,0,20,{x:-40,y:0,radius:15},r.angles,r.shape,r.profile)).toBe(false);});
 });
-describe('Editor transaccional',()=>{
-  it('impide comprar sin saldo y solo descuenta compras',()=>{
-    const r=newRun();expect(buy(r,'jaw')).toBe(false);r.points=6;
-    expect(buy(r,'jaw')).toBe(true);expect(r.points).toBe(3);expect(r.inventory.jaw).toBe(1);
-    expect(place(r,'jaw',2)).toBe(true);expect(move(r,2,6)).toBe(true);expect(remove(r,6)).toBe(true);expect(r.points).toBe(3);expect(r.inventory.jaw).toBe(1);
-  });
-  it('limita la capacidad inicial a cuatro aunque haya ocho puntos',()=>{
-    const r=newRun();r.inventory.spike=4;
-    expect(place(r,'spike',1)).toBe(true);expect(place(r,'spike',2)).toBe(true);
-    expect(place(r,'spike',3)).toBe(false);expect(usedCapacity(r.parts)).toBe(4);expect(r.inventory.spike).toBe(2);
-  });
-  it('permite reemplazar a capacidad completa y devuelve la pieza al inventario',()=>{
-    const r=newRun();r.inventory.plate=3;place(r,'plate',1);place(r,'plate',2);r.inventory.jaw=1;
-    expect(place(r,'jaw',0)).toBe(true);expect(r.inventory.gather).toBe(1);expect(usedCapacity(r.parts)).toBe(4);
-  });
-  it('mover a un punto ocupado intercambia piezas gratis',()=>{
-    const r=newRun();expect(move(r,0,4)).toBe(true);expect(r.parts[0]).toBe('flagellum');expect(r.parts[4]).toBe('gather');expect(r.points).toBe(0);
-  });
-  it('una copia de edición puede cancelarse sin alterar el original',()=>{
-    const r=newRun();r.points=6;const draft=copyRun(r);buy(draft,'jaw');remove(draft,0);place(draft,'jaw',3);
-    expect(r.parts[0]).toBe('gather');expect(r.points).toBe(6);expect(r.inventory.jaw).toBe(0);
-  });
-  it('aplica peso y beneficios decrecientes de flagelos',()=>{
-    const r=newRun(),base=stats(r.parts,0).speed;r.parts[2]='plate';expect(stats(r.parts,0).speed).toBeLessThan(base);
-    r.parts[2]=null;r.parts[3]='flagellum';const second=stats(r.parts,0).speed-base;r.parts[5]='flagellum';const third=stats(r.parts,0).speed-base-second;
-    expect(second).toBeGreaterThan(third);
-  });
+describe('Escultura de cuerpo y locomoción',()=>{
+  it('tiene cinco vértebras con ancho independiente',()=>{const p=profileFor(0);expect(p.knots).toHaveLength(5);expect(widthAt(p.knots[2]*p.length/2,p)).toBeCloseTo(p.widths[2]);p.widths[2]=.35;expect(widthAt(0,p)).toBeCloseTo(.35);});
+  it('todo contorno mantiene simetría bilateral',()=>{const p=profileFor(0);p.length=3.5;p.widths=[.23,1.2,.3,1.1,.4];for(const a of [.2,.7,1.3,2,2.7]){expect(bodyRadius(a,0,p)).toBeCloseTo(bodyRadius(-a,0,p),5);const l=anchor(a,30,0,p),r=anchor(-a,30,0,p);expect(l.x).toBeCloseTo(r.x);expect(l.y).toBeCloseTo(-r.y);}});
+  it('rechaza vértebras cruzadas y valores extremos',()=>{const p=profileFor(0);p.knots[2]=p.knots[1];expect(validProfile(p)).toBe(false);const q=profileFor(0);q.widths[0]=NaN;expect(validProfile(q)).toBe(false);q.widths[0]=.2;q.length=100;expect(validProfile(q)).toBe(false);});
+  it('el largo cambia físicamente el frente del cuerpo',()=>{const p=profileFor(0),old=anchor(0,20,0,p);p.length=3.5;expect(anchor(0,20,0,p).x).toBeGreaterThan(old.x);});
+  it('el cuerpo ancho aumenta salud y arrastre',()=>{const r=newRun(),base=stats(r.parts,0,r.angles,r.profile);const p=profileFor(0);p.widths.fill(1.25);p.length=3.4;expect(profileMass(p)).toBeGreaterThan(1);expect(stats(r.parts,0,r.angles,p).health).toBeGreaterThan(base.health);expect(stats(r.parts,0,r.angles,p).speed).toBeLessThan(base.speed);});
+  it('esculpir conserva la fracción de salud y no la regenera al alternar',()=>{const r=newRun();r.health=50;const original=structuredClone(r.profile),wide=profileFor(0);wide.widths.fill(1.2);setProfile(r,wide);expect(r.health/maxHealth(0,r.profile)).toBeCloseTo(.5);setProfile(r,original);expect(r.health).toBeCloseTo(50);});
+  it('los ojos siempre se configuran en uno, dos o tres pares',()=>{const r=newRun();expect(validEyes(r.eyes)).toBe(true);r.eyes.pairs=3;expect(validEyes(r.eyes)).toBe(true);r.eyes.pairs=4;expect(validEyes(r.eyes)).toBe(false);});
+  it('los flagelos posteriores propulsan mejor y los laterales giran mejor',()=>{const r=newRun(),rear=stats(r.parts,0,r.angles);r.angles[4]=Math.PI/2;const side=stats(r.parts,0,r.angles);r.angles[4]=0;const front=stats(r.parts,0,r.angles);expect(rear.speed).toBeGreaterThan(side.speed);expect(side.speed).toBeGreaterThan(front.speed);expect(side.turnRate).toBeGreaterThan(rear.turnRate);expect(propulsion(r.parts,r.angles)).toBeCloseTo(.35);});
+  it('los cilios mejoran realmente aceleración y giro',()=>{const r=newRun(),base=stats(r.parts,0,r.angles);r.points=6;mount(r,'cilia',Math.PI/2);const changed=stats(r.parts,0,r.angles);expect(changed.acceleration).toBeGreaterThan(base.acceleration);expect(changed.turnRate).toBeGreaterThan(base.turnRate);});
+  it('los sifones mejoran potencia, duración y recarga del impulso',()=>{const r=newRun(),base=stats(r.parts,0,r.angles);r.points=6;mount(r,'jet',2.1);const changed=stats(r.parts,0,r.angles);expect(changed.dashPower).toBeGreaterThan(base.dashPower);expect(changed.dashDuration).toBeGreaterThan(base.dashDuration);expect(changed.cooldown).toBeLessThan(base.cooldown);});
+  it('placas y pinchos añaden peso sin impedir moverse',()=>{const r=newRun(),base=stats(r.parts,0,r.angles);r.points=8;mount(r,'plate',1);mount(r,'spike',2);const changed=stats(r.parts,0,r.angles);expect(changed.speed).toBeLessThan(base.speed);expect(changed.speed).toBeGreaterThan(50);});
+  it('el flagelo se ondula más al nadar y se afina hacia la punta',()=>{const idle=tailPoints(Math.PI,20,0,1,0,0),moving=tailPoints(Math.PI,20,0,1,1,0);expect(idle[0]).toEqual(moving[0]);expect(moving[18].y).not.toBeCloseTo(idle[18].y);expect(moving[0].width).toBeGreaterThan(moving[26].width);});
 });
-describe('Progresión y final',()=>{
-  it('recorre las cinco escalas con capacidad y puntos separados del alimento',()=>{
-    const r=newRun();expect(grow(r)).toBe(false);
-    for(let i=0;i<4;i++){r.food=BALANCE.scales[i].food;expect(grow(r)).toBe(true);expect(r.scale).toBe(i+1);expect(r.food).toBe(0);}
-    expect(stats(r.parts,r.scale).capacity).toBe(6);expect(r.points).toBe(22);expect(grow(r)).toBe(false);
-  });
-  it('la primera adaptación permite comprar cualquier familia',()=>{
-    const r=newRun();r.food=BALANCE.scales[0].food;grow(r);expect(buy(r,'jaw')).toBe(true);expect(buy(r,'filter')).toBe(true);
-  });
-  it('comer sana y concede alimento, sin dar puntos de compra',()=>{
-    const r=newRun();r.health=50;eat(r,'algae');expect(r.food).toBe(4);expect(r.totalFood).toBe(4);expect(r.health).toBeGreaterThan(50);expect(r.points).toBe(0);
-  });
-  it('solo permite ganar recolectando en el jardín durante Madurez',()=>{
-    const r=newRun();r.scale=4;eat(r,'remains');expect(r.finalFood).toBe(0);expect(canWin(r)).toBe(false);
-    r.x=BALANCE.finalZone.x;r.y=BALANCE.finalZone.y;
-    for(let i=0;i<19;i++)eat(r,'remains');expect(canWin(r)).toBe(true);
-  });
+function actor(id:number,x=0,y=0):ContactActor{const r=newRun();return {id,x,y,angle:0,radius:20,parts:r.parts,angles:r.angles,shape:0,profile:r.profile,health:100};}
+describe('Herramientas de contacto',()=>{
+  it('descarga solo por contacto del órgano, con recarga por atacante',()=>{const tool=new ContactTools(),a=actor(0),b=actor(1,42);a.parts[0]='electric';expect(tool.contact(a,actor(2,-42),0)).toHaveLength(0);expect(tool.contact(a,b,0).find(e=>e.kind==='electric')).toMatchObject({damage:10,stun:BALANCE.electricStun});expect(tool.contact(a,b,1)).toHaveLength(0);expect(tool.contact(a,b,3)).toHaveLength(1);});
+  it('las glándulas crean nubes desde su ubicación y no dañan al dueño',()=>{const tool=new ContactTools(),a=actor(0),b=actor(1,42);a.parts[0]='poison';tool.contact(a,b,0);expect(tool.clouds).toHaveLength(1);expect(tool.clouds[0].x).toBeGreaterThan(20);const damage=tool.tick([a,b],.5,.5);expect(damage.has(0)).toBe(false);expect(damage.get(1)).toBeCloseTo(2.5);});
+  it('las nubes no multiplican daño al superponerse',()=>{const tool=new ContactTools(),a=actor(0),b=actor(1,42),other=actor(2);a.parts[0]=other.parts[0]='poison';tool.contact(a,b,0);tool.contact(other,b,0);expect(tool.tick([b],1,1).get(1)).toBeCloseTo(5);});
+  it.each([15,30,60])('integra el mismo daño real a %i FPS, incluida la caducidad',fps=>{const tool=new ContactTools(),a=actor(0),b=actor(1,42);a.parts[0]='poison';tool.contact(a,b,0);let total=0;for(let i=1;i<=fps*3;i++)total+=tool.tick([b],i/fps,1/fps).get(1)??0;expect(total).toBeCloseTo(BALANCE.poisonDamagePerSecond*BALANCE.poisonDuration,5);expect(tool.clouds).toHaveLength(0);});
+  it('el mismo contacto no crea nubes cada frame',()=>{const tool=new ContactTools(),a=actor(0),b=actor(1,42);a.parts[0]='poison';tool.contact(a,b,0);for(let i=1;i<60;i++)tool.contact(a,b,i/60);expect(tool.clouds).toHaveLength(1);});
+  it('los actores muertos y el propio cuerpo no activan herramientas',()=>{const tool=new ContactTools(),a=actor(0),b=actor(1,42);a.parts[0]='electric';expect(tool.contact(a,a,0)).toHaveLength(0);b.health=0;expect(tool.contact(a,b,0)).toHaveLength(0);});
 });
-describe('Guardado versionado',()=>{
+describe('Crecimiento, alimento y final',()=>{
+  it('crece por cinco escalas con ADN y alimento separados',()=>{const r=newRun();expect(grow(r)).toBe(false);for(let i=0;i<4;i++){r.food=BALANCE.scales[i].food;expect(grow(r)).toBe(true);expect(r.scale).toBe(i+1);expect(r.food).toBe(0);}expect(r.points).toBe(36);expect(stats(r.parts,r.scale).capacity).toBe(12);expect(grow(r)).toBe(false);});
+  it('comer sana sin dar puntos de compra',()=>{const r=newRun();r.health=50;eat(r,'algae');expect(r.food).toBe(4);expect(r.totalFood).toBe(4);expect(r.health).toBeGreaterThan(50);expect(r.points).toBe(0);});
+  it('solo el alimento dentro del jardín en Madurez permite ganar',()=>{const r=newRun();r.scale=4;eat(r,'remains');expect(r.finalFood).toBe(0);r.x=BALANCE.finalZone.x;r.y=BALANCE.finalZone.y;for(let i=0;i<19;i++)eat(r,'remains');expect(canWin(r)).toBe(true);});
+  it('los frutos tienen posiciones estables ligadas a la planta',()=>{const p={x:400,y:500,radius:70,phase:0};const first=fruitPosition(p,0,0),second=fruitPosition(p,6,0);expect(Math.hypot(second.x-p.x,second.y-p.y)).toBeGreaterThan(Math.hypot(first.x-p.x,first.y-p.y));expect(fruitPosition({...p,x:500},0,0).x-first.x).toBeCloseTo(100);});
+});
+describe('Repertorio real de especies',()=>{
+  it('ofrece catorce especies y seis comportamientos',()=>{expect(SPECIES_KEYS).toHaveLength(14);expect(new Set(SPECIES_KEYS.map(k=>SPECIES[k].behavior)).size).toBe(6);});
+  it.each(SPECIES_KEYS)('%s tiene anatomía simétrica, piel y equipamiento válido',key=>{const s=SPECIES[key],load=speciesLoadout(s);expect(load.parts).toHaveLength(ORGAN_SLOTS);expect(isSymmetric(load.parts,load.angles)).toBe(true);expect(validProfile(s.profile)).toBe(true);expect(validEyes(s.eyes)).toBe(true);expect(s.speed).toBeGreaterThan(0);expect(load.parts.some(p=>p==='gather'||p==='jaw'||p==='filter')).toBe(true);});
+});
+describe('Guardado y migración',()=>{
   let data:Map<string,string>;
   beforeEach(()=>{data=new Map();vi.stubGlobal('localStorage',{getItem:(k:string)=>data.get(k)||null,setItem:(k:string,v:string)=>data.set(k,v),removeItem:(k:string)=>data.delete(k)});});
-  it('restaura construcción, inventario, salud, escala y progreso',()=>{
-    const r=newRun();r.scale=2;r.inventory.jaw=2;r.points=7;r.health=71;r.food=15;r.time=142;saveRun(r);expect(loadRun()).toEqual(r);clearRun();expect(loadRun()).toBeNull();
-  });
-  it('rechaza datos corruptos, versiones desconocidas y piezas imposibles',()=>{
-    data.set('sprout.save.v1','{broken');expect(loadRun()).toBeNull();data.set('sprout.save.v1',JSON.stringify({version:999,run:newRun()}));expect(loadRun()).toBeNull();
-    const r=newRun();r.parts[0]='wrong' as never;expect(validRun(r)).toBe(false);r.parts[0]=null;expect(validRun(r)).toBe(false);
-  });
-  it('rechaza números inválidos y capacidad excedida',()=>{
-    const r=newRun();r.health=NaN;expect(validRun(r)).toBe(false);r.health=100;r.parts.fill('plate');expect(validRun(r)).toBe(false);
-  });
-  it('maneja almacenamiento bloqueado sin interrumpir la partida',()=>{
-    vi.stubGlobal('localStorage',{getItem:()=>{throw Error('blocked');},setItem:()=>{throw Error('blocked');},removeItem:()=>{throw Error('blocked');}});
-    expect(loadRun()).toBeNull();expect(saveRun(newRun())).toBe(false);expect(()=>clearRun()).not.toThrow();
-  });
+  it('conserva cuerpo, ojos, patrón, pares y presupuesto en formato 3',()=>{const r=newRun();r.points=8;mount(r,'jaw',.8);r.eyes.kind='stalk';r.eyes.pairs=3;r.pattern='bands';r.profile.length=3.2;r.health=70;saveRun(r);expect(JSON.parse(data.get('sprout.save.v1')!).version).toBe(3);expect(loadRun()).toEqual(r);});
+  it('migra los ocho puntos antiguos sin perder ADN ni adaptaciones',()=>{const r=newRun();const old={...r,parts:['gather','spike',null,null,'flagellum',null,null,null],angles:DEFAULT_ANGLES.slice(0,8),inventory:{gather:0,jaw:1,filter:0,spike:0,flagellum:0,plate:0},points:5,profile:undefined,eyes:undefined,pattern:undefined};data.set('sprout.save.v1',JSON.stringify({version:2,run:old}));const migrated=loadRun()!;expect(migrated.parts).toHaveLength(ORGAN_SLOTS);expect(migrated.parts.filter(p=>p==='spike')).toHaveLength(2);expect(migrated.points).toBe(5);expect(migrated.inventory.jaw).toBe(1);expect(isSymmetric(migrated.parts,migrated.angles)).toBe(true);});
+  it('migra el primer formato sin campos de anatomía',()=>{const r=newRun(),old={...r,parts:r.parts.slice(0,8),angles:undefined,shape:undefined,color:undefined,profile:undefined,eyes:undefined,pattern:undefined,inventory:{gather:0,jaw:0,filter:0,spike:0,flagellum:0,plate:0}};expect(migrateRun(old)?.profile).toEqual(profileFor(0));});
+  it('rechaza un lateral huérfano y los perfiles corruptos',()=>{const r=newRun();r.parts[1]='spike';expect(validRun(r)).toBe(false);r.parts[1]=null;r.profile.widths[2]=Infinity;expect(validRun(r)).toBe(false);});
+  it('rechaza JSON roto, versiones desconocidas y campos inválidos',()=>{data.set('sprout.save.v1','{broken');expect(loadRun()).toBeNull();data.set('sprout.save.v1',JSON.stringify({version:999,run:newRun()}));expect(loadRun()).toBeNull();const r=newRun();r.health=NaN;expect(validRun(r)).toBe(false);r.health=100;r.eyes.pairs=7;expect(validRun(r)).toBe(false);});
+  it('almacenamiento bloqueado no rompe la partida',()=>{vi.stubGlobal('localStorage',{getItem:()=>{throw Error('blocked');},setItem:()=>{throw Error('blocked');},removeItem:()=>{throw Error('blocked');}});expect(loadRun()).toBeNull();expect(saveRun(newRun())).toBe(false);expect(()=>clearRun()).not.toThrow();});
 });
-it('consulta espacial limita vecinos y cubre fronteras de celdas',()=>{
-  const grid=new Spatial<{x:number;y:number;id:number}>(100),items=[{x:99,y:99,id:1},{x:101,y:101,id:2},{x:999,y:999,id:3}];grid.rebuild(items);
-  expect(grid.query(100,100,5).map(x=>x.id)).toEqual([1,2]);grid.rebuild([items[2]]);expect(grid.query(100,100,5)).toEqual([]);
-});
-describe('Montaje libre sobre la membrana',()=>{
-  it('compra y coloca de forma atómica en una posición no numerada',()=>{
-    const r=newRun();r.scale=1;r.points=6;
-    expect(mount(r,'jaw',.43).ok).toBe(true);expect(r.points).toBe(3);
-    const i=r.parts.indexOf('jaw');expect(r.angles[i]).toBeCloseTo(.43);expect(closestPart(r,.43)).toBe(i);
-  });
-  it('reemplaza la boca y devuelve la anterior al inventario',()=>{
-    const r=newRun();r.points=3;expect(mount(r,'jaw',0).ok).toBe(true);expect(r.parts[0]).toBe('jaw');expect(r.inventory.gather).toBe(1);expect(r.points).toBe(0);
-  });
-  it('un montaje rechazado no cobra ni consume la boca reemplazada',()=>{
-    const r=newRun();r.points=2;const before=copyRun(r);expect(mount(r,'jaw',0).ok).toBe(false);expect(r).toEqual(before);
-  });
-  it('un par simétrico usa dos piezas y cobra cada una',()=>{
-    const r=newRun();r.points=6;expect(mount(r,'jaw',.65,true).ok).toBe(true);expect(r.points).toBe(0);expect(usedCapacity(r.parts)).toBe(4);
-    const angles=r.parts.flatMap((p,i)=>p==='jaw'?[r.angles[i]]:[]);expect(angles[0]).toBeCloseTo(.65);expect(angles[1]).toBeCloseTo(-.65);
-  });
-  it('un par sin presupuesto se rechaza por completo',()=>{
-    const r=newRun();r.points=3;const before=copyRun(r);expect(mount(r,'jaw',.65,true).ok).toBe(false);expect(r).toEqual(before);
-  });
-  it('la simetría no duplica piezas situadas en el eje central',()=>{
-    const r=newRun();r.points=3;expect(mount(r,'jaw',0,true).ok).toBe(true);expect(r.parts.filter(p=>p==='jaw')).toHaveLength(1);
-  });
-  it('recolocar cambia el ángulo real sin gastar puntos ni piezas',()=>{
-    const r=newRun();r.points=6;expect(relocate(r,0,.51)).toBe(true);expect(r.angles[0]).toBeCloseTo(.51);expect(r.points).toBe(6);expect(r.inventory.gather).toBe(0);
-  });
-  it('alimentación y armadura siguen los ángulos libres',()=>{
-    const r=newRun();r.angles[0]=.61;const p=partPosition(0,0,0,20,0,r.angles,r.shape),a=anchor(.61,20,r.shape);
-    expect(p.x).toBeCloseTo(a.x);expect(p.y).toBeCloseTo(a.y);
-    expect(mouthAt(r.parts,0,0,0,20,{x:p.x,y:p.y,radius:3,kind:'algae'},r.angles,r.shape)).toBe(true);
-    r.parts[2]='plate';r.angles[2]=.61;expect(protection(r.parts,0,.61,r.angles)).toBeCloseTo(.35);expect(protection(r.parts,0,Math.PI,r.angles)).toBe(1);
-  });
-  it('un flagelo trasero propulsa mejor que uno frontal',()=>{
-    const r=newRun(),rear=stats(r.parts,0,r.angles).speed;r.angles[4]=Math.PI/2;const side=stats(r.parts,0,r.angles).speed;r.angles[4]=0;const front=stats(r.parts,0,r.angles).speed;
-    expect(rear).toBeGreaterThan(side);expect(side).toBeGreaterThan(front);expect(propulsion(r.parts,r.angles)).toBeCloseTo(.35);
-  });
-  it('la ondulación del flagelo responde a la velocidad',()=>{
-    const idle=tailPoints(Math.PI,20,0,1,0,0),moving=tailPoints(Math.PI,20,0,1,1,0);
-    expect(idle[0]).toEqual(moving[0]);expect(moving[18].y).not.toBeCloseTo(idle[18].y);expect(moving[0].width).toBeGreaterThan(moving[26].width);
-  });
-});
-describe('Migración de partidas',()=>{
-  it('conserva el guardado original y le asigna anatomía compatible',()=>{
-    const old=newRun();const legacy={...old,angles:undefined,shape:undefined,color:undefined};
-    vi.stubGlobal('localStorage',{getItem:()=>JSON.stringify({version:1,run:legacy})});
-    const restored=loadRun();expect(restored?.parts).toEqual(old.parts);expect(restored?.angles).toEqual(old.angles);expect(restored?.shape).toBe(0);expect(restored?.color).toBe(old.color);
-  });
-  it('rechaza anatomía corrupta en el nuevo formato',()=>{
-    const r=newRun();r.angles[2]=Infinity;expect(validRun(r)).toBe(false);r.angles[2]=0;r.shape=50;expect(validRun(r)).toBe(false);
-  });
-});
-it('un par recolocado al frente mantiene separación y no cobra',()=>{
-  const r=newRun();r.points=6;mount(r,'jaw',.65,true);const slot=r.parts.indexOf('jaw');relocate(r,slot,0,true);
-  const jawAngles=r.parts.flatMap((p,i)=>p==='jaw'?[r.angles[i]]:[]);expect(jawAngles[0]).toBeCloseTo(.22);expect(jawAngles[1]).toBeCloseTo(-.22);expect(r.points).toBe(0);expect(usedCapacity(r.parts)).toBe(4);
-});
-it('los flagelos laterales mejoran más el giro que los traseros',()=>{
-  const r=newRun(),rear=stats(r.parts,0,r.angles).turnRate;r.angles[4]=Math.PI/2;expect(stats(r.parts,0,r.angles).turnRate).toBeGreaterThan(rear);
-});
+it('el índice espacial cubre los bordes de celda y excluye entidades lejanas',()=>{const grid=new Spatial<{x:number;y:number;id:number}>(100);grid.rebuild([{x:99,y:99,id:1},{x:101,y:101,id:2},{x:999,y:999,id:3}]);expect(grid.query(100,100,5).map(x=>x.id)).toEqual([1,2]);});

@@ -3,7 +3,7 @@ export class Controls {
   private stickOrigin={x:0,y:0};private touch={x:0,y:0};private abort=new AbortController();
   constructor(private pause:()=>void) {
     const options={signal:this.abort.signal};
-    window.addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Escape'].includes(e.key)) e.preventDefault();if(e.key==='Escape'&&!e.repeat)this.pause();this.keys.add(e.key.toLowerCase());},options);
+    window.addEventListener('keydown',e=>{if((e.target as HTMLElement).closest?.('input,textarea,select,[contenteditable=true]'))return;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Escape'].includes(e.key)) e.preventDefault();if(e.key==='Escape'&&!e.repeat)this.pause();this.keys.add(e.key.toLowerCase());},options);
     window.addEventListener('keyup',e=>this.keys.delete(e.key.toLowerCase()),options);
     window.addEventListener('blur',()=>this.reset(),options);
   }

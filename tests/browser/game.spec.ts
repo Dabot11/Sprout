@@ -23,30 +23,32 @@ async function dropAt(page:Page,angle:number){
 async function choose(page:Page,part:string,angle:number){await page.locator(`[data-part="${part}"]`).click();await dropAt(page,angle);}
 test('crear célula: elegir mandíbula directamente y pagar solo al colocar',async({page})=>{
   await boot(page);await page.locator('#play').click();await expect(page.locator('.sculpt-editor h2')).toHaveText('Tu pequeña vida empieza aquí.');
-  await page.locator('[data-part="jaw"]').click();await expect(page.locator('.dna-bank b')).toHaveText('3');
-  await page.locator('[data-mounted="0"]').click();await expect(page.locator('.dna-bank b')).toHaveText('0');await page.locator('#confirm-edit').click();
+  await page.locator('[data-part="jaw"]').click();await expect(page.locator('.dna-bank b')).toHaveText('6');
+  await page.locator('[data-mounted="0"]').click();await expect(page.locator('.dna-bank b')).toHaveText('3');await page.locator('#confirm-edit').click();
   const r=await getRun(page);expect(r.parts[0]).toBe('jaw');expect(r.inventory.gather).toBe(1);
 });
 test('editor: montaje libre, recolocación, retirada, reutilización y cancelación',async({page})=>{
-  await play(page);await growth(page);const before=await getRun(page);await choose(page,'jaw',.65);await expect(page.locator('.dna-bank b')).toHaveText('6');
+  await play(page);await growth(page);const before=await getRun(page);await choose(page,'jaw',.65);await expect(page.locator('.dna-bank b')).toHaveText('11');
   await page.locator('[data-mounted="1"]').click();await dropAt(page,1.6);await page.locator('[data-mounted="1"]').click();await page.locator('#remove-part').click();
   await expect(page.locator('[data-part="jaw"] small')).toHaveText('1 en reserva');await choose(page,'jaw',0);await expect(page.locator('[data-part="gather"] small')).toHaveText('1 en reserva');
   await page.screenshot({path:'test-results/editor-desktop.png'});await page.locator('#cancel-edit').click();const r=await getRun(page);expect(r.points).toBe(before.points);expect(r.parts).toEqual(before.parts);expect(r.angles).toEqual(before.angles);
 });
-test('editor: rechazo atómico por capacidad, simetría, undo y guardado',async({page})=>{
-  await play(page);await growth(page);await page.locator('#symmetry').check();await choose(page,'jaw',.65);
-  await expect(page.locator('#capacity-label')).toHaveText('4 / 4 piezas');await expect(page.locator('.dna-bank b')).toHaveText('3');
-  await choose(page,'flagellum',2.2);await expect(page.locator('#editor-message')).toContainText('Capacidad completa');await expect(page.locator('.dna-bank b')).toHaveText('3');
-  await page.locator('#undo-edit').click();await expect(page.locator('#capacity-label')).toHaveText('2 / 4 piezas');await expect(page.locator('.dna-bank b')).toHaveText('9');
-  await choose(page,'jaw',.65);await page.locator('[data-color="15309703"]').click();await page.locator('[data-form="2"]').click();await page.locator('#confirm-edit').click();
-  const expected=await getRun(page);await page.reload();await expect(page.locator('#continue')).toBeEnabled();await page.locator('#continue').click();const restored=await getRun(page);
+test('editor: capacidad atómica, simetría obligatoria, undo y guardado',async({page})=>{
+  await boot(page);await page.locator('#play').click();await choose(page,'jaw',.65);
+  await expect(page.locator('#capacity-label')).toHaveText('4 / 6 piezas');await expect(page.locator('.dna-bank b')).toHaveText('3');
+  await choose(page,'flagellum',2.2);await expect(page.locator('#capacity-label')).toHaveText('6 / 6 piezas');
+  await choose(page,'plate',1.5);await expect(page.locator('#editor-message')).toContainText('Capacidad completa');await expect(page.locator('.dna-bank b')).toHaveText('1');
+  await page.locator('#undo-edit').click();await expect(page.locator('#capacity-label')).toHaveText('4 / 6 piezas');await expect(page.locator('.dna-bank b')).toHaveText('3');
+  await page.locator('[data-mode="body"]').click();await page.locator('[data-color]').last().click();await page.locator('[data-form="2"]').click();await page.locator('#confirm-edit').click();
+  const expected=await getRun(page);expect(expected.parts.filter((p:string)=>p==='jaw')).toHaveLength(2);
+  await page.reload();await expect(page.locator('#continue')).toBeEnabled();await page.locator('#continue').click();const restored=await getRun(page);
   expect(restored.parts).toEqual(expected.parts);expect(restored.angles).toEqual(expected.angles);expect(restored.inventory).toEqual(expected.inventory);expect(restored.color).toBe(expected.color);expect(restored.shape).toBe(2);
 });
 test('alimentación real: boca frontal, dieta y radio de filtrado',async({page})=>{
   await play(page);
   const result=await page.evaluate(async()=>{
     const {scene:s}=(window as any).__sprout;s.setPaused(true);const p=s.player;p.angle=0;const f=s.foods[0];
-    const probe=(part:string,kind:string,x:number)=>{p.parts=['gather',null,null,null,null,null,null,null];p.parts[0]=part;f.kind=kind;f.radius=3;f.x=p.x+x;f.y=p.y;f.active=true;const before=s.run.totalFood;s.foodGrid.rebuild([f]);s.feed(p);return s.run.totalFood-before;};
+    const probe=(part:string,kind:string,x:number)=>{p.parts=Array(16).fill(null);p.parts[0]=part;f.kind=kind;f.radius=3;f.x=p.x+x;f.y=p.y;f.active=true;const before=s.run.totalFood;s.foodGrid.rebuild([f]);s.feed(p);return s.run.totalFood-before;};
     return {front:probe('gather','algae',p.radius*1.3),rear:probe('gather','algae',-p.radius*1.3),wrong:probe('gather','remains',p.radius*1.3),meat:probe('jaw','remains',p.radius*1.3),filter:probe('filter','particle',p.radius*1.8)};
   });expect(result).toEqual({front:4,rear:0,wrong:0,meat:8,filter:1});
 });
@@ -64,7 +66,7 @@ test('cinco escalas, objetivo final y división celular',async({page})=>{
   await expect(page.locator('#objective')).toBeVisible();
   await page.evaluate(async()=>{
     const {scene:s}=(window as any).__sprout;const config='/src/game/config.ts';const {BALANCE}=await import(config);s.player.x=BALANCE.finalZone.x;s.player.y=BALANCE.finalZone.y;s.player.angle=0;s.run.finalFood=BALANCE.finalFood-4;
-    for(const c of s.creatures){c.x=100;c.y=100;}const f=s.foods[0];f.kind='algae';f.radius=5;f.active=true;f.x=s.player.x+s.player.radius*1.1;f.y=s.player.y;
+    for(const c of s.creatures){c.x=100;c.y=100;}const f=s.foods[0];delete f.plantId;f.kind='algae';f.radius=5;f.active=true;f.x=s.player.x+s.player.radius*1.1;f.y=s.player.y;
   });
   await expect(page.locator('.result h2')).toHaveText('Y todo vuelve a empezar.',{timeout:10000});await page.locator('#replay').click();expect((await getRun(page)).scale).toBe(0);
 });
@@ -114,6 +116,53 @@ test('movimiento hacia el mouse y anatomía de mandíbula lateral',async({page})
 });
 test('editor táctil: reemplazar la boca, cambiar el cuerpo y empezar',async({browser})=>{
   const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});const page=await context.newPage();await boot(page);await page.locator('#play').tap();
-  await page.locator('[data-part="jaw"]').scrollIntoViewIfNeeded();await page.locator('[data-part="jaw"]').tap();await page.locator('[data-mounted="0"]').scrollIntoViewIfNeeded();await page.locator('[data-mounted="0"]').tap();await expect(page.locator('.dna-bank b')).toHaveText('0');
+  await page.locator('[data-part="jaw"]').scrollIntoViewIfNeeded();await page.locator('[data-part="jaw"]').tap();await page.locator('[data-mounted="0"]').scrollIntoViewIfNeeded();await page.locator('[data-mounted="0"]').tap();await expect(page.locator('.dna-bank b')).toHaveText('3');
+  await page.locator('[data-mode="body"]').tap();
   await page.locator('[data-form="3"]').scrollIntoViewIfNeeded();await page.locator('[data-form="3"]').tap();await page.screenshot({path:'test-results/editor-touch.png'});await page.locator('#confirm-edit').tap();expect((await getRun(page)).shape).toBe(3);expect((await getRun(page)).parts[0]).toBe('jaw');await context.close();
+});
+async function range(page:Page,id:string,value:string){await page.locator(`#${id}`).evaluate((element,value)=>{const input=element as HTMLInputElement;input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));},value);}
+test('escultura: largo, ancho por vértebra, arrastre, piel y tres pares de ojos persistentes',async({page})=>{
+  await boot(page);await page.locator('#play').click();await page.locator('[data-mode="body"]').click();
+  await range(page,'body-length','3.1');await page.locator('[data-bone="3"]').click();await range(page,'bone-width','1.2');
+  const node=page.locator('[data-bone="1"]'),box=(await node.boundingBox())!;await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2,box.y+box.height/2-12,{steps:6});await page.mouse.up();
+  await range(page,'skin-color','#a074c9');await page.locator('[data-pattern="granules"]').click();
+  await page.screenshot({path:'test-results/body-sculpt.png'});
+  await page.locator('[data-mode="eyes"]').click();await page.locator('[data-eye-kind="stalk"]').click();await range(page,'eye-pairs','3');await range(page,'eye-position','.1');await range(page,'eye-spacing','1.05');
+  await page.locator('#confirm-edit').click();const r=await getRun(page);expect(r.profile.length).toBe(3.1);expect(r.profile.widths[3]).toBe(1.2);expect(r.profile.knots[1]).not.toBe(-.4);expect(r.color).toBe(0xa074c9);expect(r.pattern).toBe('granules');expect(r.eyes).toEqual({kind:'stalk',pairs:3,position:.1,spacing:1.05});expect(r.points).toBe(6);
+  await page.locator('#pause').click();await page.reload();await page.locator('#continue').click();const restored=await getRun(page);expect(restored.profile).toEqual(r.profile);expect(restored.eyes).toEqual(r.eyes);expect(restored.pattern).toBe(r.pattern);expect(restored.color).toBe(r.color);
+});
+test('un conjunto lateral se mueve como par y se convierte en una pieza central',async({page})=>{
+  await boot(page);await page.locator('#play').click();await choose(page,'cilia',Math.PI/2);await expect(page.locator('[aria-label="Seleccionar Cilios"]')).toHaveCount(2);
+  await page.locator('[aria-label="Seleccionar Cilios"]').first().click();await dropAt(page,Math.PI);await expect(page.locator('[aria-label="Seleccionar Cilios"]')).toHaveCount(1);await expect(page.locator('[data-part="flagellum"] small')).toHaveText('1 en reserva');await expect(page.locator('.dna-bank b')).toHaveText('4');
+  await page.locator('#confirm-edit').click();const r=await getRun(page);const slot=r.parts.indexOf('cilia');expect(r.angles[slot]).toBeCloseTo(Math.PI);expect(r.parts.filter(Boolean)).toHaveLength(2);
+});
+test('ecología: frutos unidos a plantas, regeneración y carne al morir',async({page})=>{
+  await play(page);const result=await page.evaluate(async()=>{
+    const {scene:s}=(window as any).__sprout;s.setPaused(true);const initial=s.foods.filter((f:any)=>f.kind==='remains'&&f.active).length;const f=s.foods.find((f:any)=>f.plantId!==undefined),plant=s.plants[f.plantId],p=s.player;const {anchor}=await import(/* @vite-ignore */ ('/src/game/anatomy.ts' as string));
+    p.angle=0;const mouth=anchor(0,p.radius,p.shape,p.profile);p.x=f.x-mouth.x;p.y=f.y;const before=s.run.totalFood;s.foodGrid.rebuild([f]);s.feed(p);const fruit={gain:s.run.totalFood-before,active:f.active,timer:f.regrowAt-s.clock,attached:Math.hypot(f.x-plant.x,f.y-plant.y)<plant.radius};s.clock=f.regrowAt+.1;s.maintain();const regenerated=f.active;
+    const c=s.creatures[0];c.health=0;s.killCreature(c);const meat=s.foods.filter((f:any)=>f.kind==='remains'&&f.active&&!f.ambient);const count=meat.length;s.killCreature(c);return {initial,fruit,regenerated,count,duplicate:s.foods.filter((f:any)=>f.kind==='remains'&&f.active&&!f.ambient).length};
+  });expect(result.initial).toBeLessThanOrEqual(6);expect(result.fruit).toMatchObject({gain:4,active:false,attached:true});expect(result.fruit.timer).toBeGreaterThanOrEqual(14);expect(result.regenerated).toBe(true);expect(result.count).toBeGreaterThanOrEqual(4);expect(result.duplicate).toBe(result.count);
+});
+test('órganos funcionales: descarga con aturdimiento, veneno con daño y propulsión equipada',async({page})=>{
+  await play(page);const result=await page.evaluate(async()=>{
+    const {scene:s}=(window as any).__sprout;s.setPaused(true);const p=s.player,c=s.creatures[0],{anchor,profileFor}=await import(/* @vite-ignore */ ('/src/game/anatomy.ts' as string)),{stats}=await import(/* @vite-ignore */ ('/src/game/model.ts' as string));
+    p.parts=Array(16).fill(null);p.parts[0]='electric';p.angle=0;p.x=4000;p.y=4000;c.profile=profileFor(0);c.x=p.x+anchor(0,p.radius,p.shape,p.profile).x;c.y=p.y;c.health=100;c.stunUntil=0;s.clock=20;s.tools.reset();s.specialContact(p,c);const electric={health:c.health,stun:c.stunUntil-s.clock};s.specialContact(p,c);const repeat=c.health;
+    p.parts[0]='poison';s.specialContact(p,c);const clouds=s.tools.clouds.length;const damage=s.tools.tick([p,c],s.clock+1,1);c.health-=damage.get(c.id)??0;const poison={health:c.health,selfDamage:damage.get(p.id)??0};
+    const baseline=stats(['gather'],0);const motor=stats(['gather','jet','cilia'],0);return {electric,repeat,clouds,poison,motor:{power:motor.dashPower>baseline.dashPower,cooldown:motor.cooldown<baseline.cooldown,turn:motor.turnRate>baseline.turnRate,acceleration:motor.acceleration>baseline.acceleration}};
+  });expect(result.electric.health).toBe(90);expect(result.electric.stun).toBeCloseTo(.32);expect(result.repeat).toBe(90);expect(result.clouds).toBe(1);expect(result.poison.health).toBe(85);expect(result.poison.selfDamage).toBe(0);expect(result.motor).toEqual({power:true,cooldown:true,turn:true,acceleration:true});
+});
+test('repertorio: catorce especies y comportamientos reconocibles',async({page})=>{
+  await boot(page);await page.locator('#species-guide').click();await expect(page.locator('[data-species-card]')).toHaveCount(14);await expect(page.locator('.bestiary')).toContainText('Territorial');await expect(page.locator('.bestiary')).toContainText('Carroñero');await page.locator('#close-bestiary').click();await expect(page.locator('.bestiary')).toHaveCount(0);
+});
+test('editor táctil: tirador de piel simétrico y selección de ojos',async({browser})=>{
+  const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});const page=await context.newPage();await boot(page);await page.locator('#play').tap();await page.locator('[data-mode="body"]').tap();
+  const handle=page.locator('[data-width="1"]');await handle.scrollIntoViewIfNeeded();const box=(await handle.boundingBox())!,cdp=await context.newCDPSession(page),x=box.x+box.width/2,y=box.y+box.height/2;
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y,id:1}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+12,y,id:1}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await page.locator('[data-mode="eyes"]').scrollIntoViewIfNeeded();await page.locator('[data-mode="eyes"]').tap();await page.locator('[data-eye-kind="compound"]').scrollIntoViewIfNeeded();await page.locator('[data-eye-kind="compound"]').tap();await page.locator('#confirm-edit').tap();const r=await getRun(page);expect(r.profile.widths[2]).toBeGreaterThan(1);expect(r.eyes.kind).toBe('compound');expect(r.points).toBe(6);await context.close();
+});
+test('Jardín de Origen: plantas sembradas y frutos dentro del objetivo final',async({page})=>{
+  await play(page);const result=await page.evaluate(async()=>{
+    const {scene:s}=(window as any).__sprout;s.setPaused(true);const config='/src/game/config.ts';const {BALANCE}=await import(config),zone=BALANCE.finalZone;s.run.scale=4;s.player.radius=22*BALANCE.scales[4].size;s.player.x=zone.x;s.player.y=zone.y;s.cameras.main.centerOn(zone.x,zone.y);s.maintain();
+    const plants=s.plants.filter((p:any)=>Math.hypot(p.x-zone.x,p.y-zone.y)<zone.radius);const fruits=s.foods.filter((f:any)=>f.plantId!==undefined&&f.active&&Math.hypot(f.x-zone.x,f.y-zone.y)<zone.radius);return {seeded:s.gardenSeeded,plants:plants.length,fruits:fruits.length};
+  });expect(result.seeded).toBe(true);expect(result.plants).toBeGreaterThanOrEqual(4);expect(result.fruits).toBeGreaterThanOrEqual(24);
 });
