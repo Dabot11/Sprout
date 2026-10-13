@@ -1,0 +1,6 @@
+{
+  "name": "sprout", "version": "0.2.0", "private": true, "type": "module",
+  "scripts": {"dev": "vite --host 0.0.0.0", "build": "tsc --noEmit && vite build", "preview": "vite preview --host 0.0.0.0", "test": "vitest run", "test:browser": "playwright test"},
+  "dependencies": {"phaser": "^3.90.0"},
+  "devDependencies": {"@playwright/test": "^1.58.0", "typescript": "^5.9.3", "vite": "^7.3.0", "vitest": "^4.0.18"}
+}
