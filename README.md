@@ -1,8 +1,18 @@
-# SPROUT · v0.3
+# SPROUT · v0.4
 
 Juego de supervivencia celular para navegador, hecho con TypeScript, Phaser y Vite. Explora, come, adapta tu criatura en cinco escalas y alcanza el Jardín de Origen para dividirte.
 
 **Jugar:** https://sprightly-sable-2d8306.netlify.app
+
+## Pulido de v0.4
+
+- Agua con nubes de luz, reflejos animados, burbujas y partículas a distintas profundidades. Membranas con borde húmedo, organelos y brillo; iris detallados y colas con relieve.
+- Mandíbulas con apertura real al morder; cilios y filtros con ciclos animados. Estelas al nadar, ondas de impulso, partículas al comer, impactos, fragmentación al morir y efectos de veneno/electricidad. Los efectos tienen un límite de 180 partículas.
+- Diez señales sonoras originales con capas de ruido filtrado y tonos, panorama estéreo, reverberación y compresión: comida, daño, impulso, crecimiento, división, editor, veneno, electricidad, muerte y derrota. Ambiente acuático y armonías suaves según pantalla; silencio al pausar y recuperación tras interrupciones del navegador.
+- Lienzos del agua limitados a la pantalla; texturas liberadas al iniciar nuevas aventuras; alternativa Canvas cuando la aceleración gráfica no está disponible o usa software. Los efectos más intensos respetan la preferencia de movimiento reducido.
+- Correcciones en contactos de bocas y pinchos, cuerpos cóncavos, reserva de carne, cadáveres, jardín persistente, cancelación de creación, teclado, recarga al pausar y estados de veneno/aturdimiento después de adaptar.
+
+La revisión y sus comprobaciones están descritas en [docs/auditoria-v04.md](docs/auditoria-v04.md).
 
 ## Anatomía y editor
 

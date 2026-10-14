@@ -7,11 +7,11 @@ type Selection={kind:'mounted';slot:number}|{kind:'new';part:PartKind}|null;
 const CATEGORIES=['Todas','Bocas','Movimiento','Defensa'] as const;
 export class Editor {
   run:Run;private original:Run;private selected:Selection=null;private mode:'organs'|'body'|'eyes'='organs';private selectedBone=2;private category=0;
-  private ghostAngle=0;private dragging:{slot:number;x:number;y:number;moved:boolean}|null=null;
+  private ghostAngle=0;private dragging:{slot:number;x:number;y:number;moved:boolean;pointer:number}|null=null;
   private history:Run[]=[];private raf=0;private start=performance.now();private aborted=new AbortController();private closed=false;
-  constructor(private root:HTMLElement,run:Run,private sound:Sound,private done:(run:Run)=>void){
+  constructor(private root:HTMLElement,run:Run,private sound:Sound,private done:(run:Run,cancelled?:boolean)=>void){
     this.original=copyRun(run);this.run=copyRun(run);this.render();this.animate();
-    window.addEventListener('keydown',e=>{if(e.key==='Delete'||e.key==='Backspace'){if(this.selected?.kind==='mounted'){e.preventDefault();this.removeSelected();}}if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();this.undo();}if(e.key==='Escape'){e.preventDefault();this.finish(this.original);}}, {signal:this.aborted.signal});
+    window.addEventListener('keydown',e=>{if(e.key==='Delete'||e.key==='Backspace'){if(this.selected?.kind==='mounted'){e.preventDefault();this.removeSelected();}}if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();this.undo();}if(e.key==='Escape'){e.preventDefault();this.finish(this.original,true);}}, {signal:this.aborted.signal});
   }
   private remember(){this.history.push(copyRun(this.run));if(this.history.length>30)this.history.shift();}
   private undo(){const previous=this.history.pop();if(previous){this.run=previous;this.selected=null;this.render('Último cambio deshecho.');}}
@@ -29,7 +29,7 @@ export class Editor {
   }
   private drawIcons(){this.root.querySelectorAll<HTMLCanvasElement>('canvas[data-icon],canvas[data-detail]').forEach(canvas=>{const p=(canvas.dataset.icon??canvas.dataset.detail) as PartKind,ctx=canvas.getContext('2d')!;ctx.translate(canvas.width*.28,canvas.height*.5);const r=canvas.height*.53;drawPart(ctx,p,r,1);if(p==='flagellum'){ctx.beginPath();ctx.moveTo(0,0);ctx.bezierCurveTo(r*.5,-r*.25,r*.8,r*.4,r*1.55,0);ctx.strokeStyle='#9dddcf';ctx.lineWidth=r*.075;ctx.stroke();}});}
   private bind(){
-    this.root.querySelector<HTMLButtonElement>('#cancel-edit')!.onclick=()=>this.finish(this.original);
+    this.root.querySelector<HTMLButtonElement>('#cancel-edit')!.onclick=()=>this.finish(this.original,true);
     this.root.querySelector<HTMLButtonElement>('#confirm-edit')!.onclick=()=>{if(!this.run.parts.some(p=>p==='gather'||p==='jaw'||p==='filter')){this.render('Conserva al menos una boca para poder alimentarte.');return;}this.finish(this.run);};
     this.root.querySelector<HTMLButtonElement>('#undo-edit')!.onclick=()=>this.undo();
     const removeButton=this.root.querySelector<HTMLButtonElement>('#remove-part');if(removeButton)removeButton.onclick=()=>this.removeSelected();
@@ -41,19 +41,20 @@ export class Editor {
     this.root.querySelectorAll<HTMLButtonElement>('[data-part]').forEach(b=>{
       const p=b.dataset.part as PartKind;
       b.onclick=()=>{this.mode='organs';this.selected={kind:'new',part:p};this.ghostAngle=p==='flagellum'||p==='jet'?Math.PI:['cilia','poison','electric','plate'].includes(p)?Math.PI/2:p==='spike'?Math.PI/3:0;this.render('Elige un lugar en la membrana. El coste se descuenta solo al colocar.');};
-      b.ondragstart=e=>{this.selected={kind:'new',part:p};e.dataTransfer?.setData('text/plain',p);};
+      b.ondragstart=e=>{this.mode='organs';this.selected={kind:'new',part:p};e.dataTransfer?.setData('text/plain',p);};
     });
     const stage=this.root.querySelector<HTMLElement>('#anatomy-stage')!;
-    stage.onpointermove=e=>{this.ghostAngle=this.pointerAngle(e,stage);if(this.dragging&&Math.hypot(e.clientX-this.dragging.x,e.clientY-this.dragging.y)>5)this.dragging.moved=true;};
+    stage.onpointermove=e=>{this.ghostAngle=this.pointerAngle(e,stage);if(this.dragging?.pointer===e.pointerId&&Math.hypot(e.clientX-this.dragging.x,e.clientY-this.dragging.y)>5)this.dragging.moved=true;};
     stage.onpointerdown=e=>{if((e.target as Element).closest('[data-mounted],[data-bone],[data-width]'))return;if(this.selected && this.validDistance(e,stage))this.commit(this.pointerAngle(e,stage));};
     stage.ondragover=e=>{e.preventDefault();this.ghostAngle=this.pointerAngle(e,stage);};
     stage.ondrop=e=>{e.preventDefault();if(this.validDistance(e,stage))this.commit(this.pointerAngle(e,stage));};
     this.root.querySelectorAll<HTMLButtonElement>('[data-mounted]').forEach(button=>{
       const slot=Number(button.dataset.mounted);
-      button.onpointerdown=e=>{e.preventDefault();e.stopPropagation();if(this.selected?.kind==='new'){this.commit(this.run.angles[slot]);return;}this.selected={kind:'mounted',slot};this.ghostAngle=this.run.angles[slot];this.dragging={slot,x:e.clientX,y:e.clientY,moved:false};button.setPointerCapture(e.pointerId);button.classList.add('is-selected');};
-      button.onpointermove=e=>{if(this.dragging){this.ghostAngle=this.pointerAngle(e,stage);if(Math.hypot(e.clientX-this.dragging.x,e.clientY-this.dragging.y)>5)this.dragging.moved=true;}};
-      button.onpointerup=e=>{if(this.dragging?.moved && this.validDistance(e,stage))this.commit(this.pointerAngle(e,stage));else this.render('Pieza seleccionada: arrastra, toca otro lugar del cuerpo o retírala.');this.dragging=null;};
-      button.onpointercancel=()=>{this.dragging=null;this.render('Movimiento cancelado.');};
+      button.onpointerdown=e=>{if(this.dragging)return;e.preventDefault();e.stopPropagation();if(this.selected?.kind==='new'){this.commit(this.run.angles[slot]);return;}this.selected={kind:'mounted',slot};this.ghostAngle=this.run.angles[slot];this.dragging={slot,x:e.clientX,y:e.clientY,moved:false,pointer:e.pointerId};button.setPointerCapture(e.pointerId);button.classList.add('is-selected');};
+      button.onpointermove=e=>{if(this.dragging?.pointer===e.pointerId){this.ghostAngle=this.pointerAngle(e,stage);if(Math.hypot(e.clientX-this.dragging.x,e.clientY-this.dragging.y)>5)this.dragging.moved=true;}};
+      button.onpointerup=e=>{if(this.dragging?.pointer!==e.pointerId)return;if(this.dragging?.moved && this.validDistance(e,stage))this.commit(this.pointerAngle(e,stage));else this.render('Pieza seleccionada: arrastra, toca otro lugar del cuerpo o retírala.');this.dragging=null;};
+      button.onclick=e=>{if(e.detail===0){if(this.selected?.kind==='new')this.commit(this.run.angles[slot]);else{this.selected={kind:'mounted',slot};this.render('Conjunto seleccionado. Puedes retirarlo o elegir otra posición.');}}};
+      button.onpointercancel=e=>{if(this.dragging?.pointer!==e.pointerId)return;this.dragging=null;this.render('Movimiento cancelado.');};
     });
   }
   private pointerAngle(e:{clientX:number;clientY:number},stage:HTMLElement){const b=stage.getBoundingClientRect(),x=(e.clientX-b.x)/b.width*640-320,y=(e.clientY-b.y)/b.height*560-250;return normalizeAngle(Math.atan2(y,x)+Math.PI/2);}
@@ -93,14 +94,15 @@ export class Editor {
     const sliders:{id:string;apply:(value:number)=>void}[]=[{id:'body-length',apply:v=>{const p=structuredClone(this.run.profile);p.length=v;setProfile(this.run,p);}},{id:'bone-width',apply:v=>{const p=structuredClone(this.run.profile);p.widths[this.selectedBone]=v;setProfile(this.run,p);}},{id:'eye-pairs',apply:v=>this.run.eyes.pairs=v},{id:'eye-position',apply:v=>this.run.eyes.position=v},{id:'eye-spacing',apply:v=>this.run.eyes.spacing=v}];
     for(const s of sliders){const input=this.root.querySelector<HTMLInputElement>(`#${s.id}`);if(!input)continue;let saved=false;input.onpointerdown=()=>{this.remember();saved=true;};input.oninput=()=>{if(!saved){this.remember();saved=true;}s.apply(Number(input.value));if(s.id==='eye-pairs'){const out=input.parentElement?.querySelector('output');if(out)out.textContent=input.value;}this.syncBodyControls();};input.onchange=()=>{const focused=document.activeElement===input;saved=false;this.render();if(focused)this.root.querySelector<HTMLInputElement>(`#${s.id}`)?.focus({preventScroll:true});};}
     this.root.querySelectorAll<HTMLCanvasElement>('[data-eye-icon]').forEach(c=>{const ctx=c.getContext('2d')!;ctx.translate(50,40);drawEyes(ctx,35,0,{...this.run.eyes,kind:c.dataset.eyeIcon as Run['eyes']['kind'],pairs:1},profileFor(0),this.run.color);});
-    const stage=this.root.querySelector<HTMLElement>('#anatomy-stage')!;
+    const stage=this.root.querySelector<HTMLElement>('#anatomy-stage')!;let pointer:number|null=null;
     this.root.querySelectorAll<HTMLButtonElement>('[data-bone],[data-width]').forEach(button=>{let moving=false;
-      button.onpointerdown=e=>{e.preventDefault();e.stopPropagation();this.remember();if(button.dataset.bone!==undefined)this.selectedBone=Number(button.dataset.bone);moving=true;button.setPointerCapture(e.pointerId);this.syncBodyControls();};
-      button.onpointermove=e=>{if(!moving)return;const b=stage.getBoundingClientRect(),x=((e.clientX-b.x)/b.width*640-320)/this.radius(),y=-((e.clientY-b.y)/b.height*560-250)/this.radius(),p=structuredClone(this.run.profile),i=this.selectedBone;
+      button.onpointerdown=e=>{if(pointer!==null)return;pointer=e.pointerId;e.preventDefault();e.stopPropagation();this.remember();if(button.dataset.bone!==undefined)this.selectedBone=Number(button.dataset.bone);moving=true;button.setPointerCapture(e.pointerId);this.syncBodyControls();};
+      button.onpointermove=e=>{if(!moving||pointer!==e.pointerId)return;const b=stage.getBoundingClientRect(),x=((e.clientX-b.x)/b.width*640-320)/this.radius(),y=-((e.clientY-b.y)/b.height*560-250)/this.radius(),p=structuredClone(this.run.profile),i=this.selectedBone;
         if(button.dataset.width!==undefined)p.widths[i]=Math.max(.18,Math.min(1.3,Math.abs(x)));else {const lo=i===0?-.9:p.knots[i-1]+.1,hi=i===4?.9:p.knots[i+1]-.1;p.knots[i]=Math.max(lo,Math.min(hi,y/(p.length/2)));}setProfile(this.run,p);this.syncBodyControls();};
-      button.onpointerup=()=>{if(moving){moving=false;this.render('Contorno actualizado. Las piezas seguirán la nueva membrana.');}};button.onpointercancel=()=>{moving=false;this.undo();};
+      button.onpointerup=e=>{if(pointer!==e.pointerId)return;if(moving){moving=false;pointer=null;this.render('Contorno actualizado. Las piezas seguirán la nueva membrana.');}};button.onpointercancel=e=>{if(pointer!==e.pointerId)return;pointer=null;moving=false;this.undo();};
+      button.onkeydown=e=>{if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();e.stopPropagation();this.remember();if(button.dataset.bone!==undefined)this.selectedBone=Number(button.dataset.bone);const p=structuredClone(this.run.profile),i=this.selectedBone;if(button.dataset.width!==undefined){const sign=Number(button.dataset.width);p.widths[i]=Math.max(.18,Math.min(1.3,p.widths[i]+(e.key==='ArrowRight'||e.key==='ArrowUp'?.04:-.04)*(e.key==='ArrowUp'||e.key==='ArrowDown'?1:sign)));}else{const lo=i===0?-.9:p.knots[i-1]+.1,hi=i===4?.9:p.knots[i+1]-.1;p.knots[i]=Math.max(lo,Math.min(hi,p.knots[i]+(e.key==='ArrowUp'?.025:-.025)));}setProfile(this.run,p);this.syncBodyControls();};
     });
   }
   private syncBodyControls(){const p=this.run.profile;const set=(id:string,text:string)=>{const e=this.root.querySelector<HTMLElement>(`#${id}`);if(e)e.textContent=text;};set('length-value',p.length.toFixed(2));set('width-value',p.widths[this.selectedBone].toFixed(2));set('bone-label',String(this.selectedBone+1));set('body-health',String(stats(this.run.parts,this.run.scale,this.run.angles,p).health));const width=this.root.querySelector<HTMLInputElement>('#bone-width');if(width)width.value=String(p.widths[this.selectedBone]);this.updateBoneHandlePositions();const values=stats(this.run.parts,this.run.scale,this.run.angles,p);this.root.querySelectorAll<HTMLElement>('.design-stats b').forEach((e,i)=>e.textContent=i===0?String(Math.round(values.speed)):i===1?values.turnRate.toFixed(1):`${values.cooldown.toFixed(1)} s`);}
-  private finish(run:Run){this.closed=true;cancelAnimationFrame(this.raf);this.aborted.abort();this.done(copyRun(run));}
+  private finish(run:Run,cancelled=false){this.closed=true;cancelAnimationFrame(this.raf);this.aborted.abort();this.done(copyRun(run),cancelled);}
 }

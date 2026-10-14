@@ -25,7 +25,7 @@ export function think(c:Creature,neighbors:Creature[],foods:Food[],player:Creatu
     }}else {c.chase=Math.max(0,c.chase-dt);c.charge=0;}
   }
   const edible=c.parts.includes('gather')?'algae':c.parts.includes('filter')?'particle':'remains';
-  const food=foods.filter(f=>f.active&&f.kind===edible).sort((a,b)=>Math.hypot(a.x-c.x,a.y-c.y)-Math.hypot(b.x-c.x,b.y-c.y))[0];
+  const food=foods.filter(f=>f.active&&f.kind===edible&&f.radius<=c.radius*.7).sort((a,b)=>Math.hypot(a.x-c.x,a.y-c.y)-Math.hypot(b.x-c.x,b.y-c.y))[0];
   if(food)c.intent=Math.atan2(food.y-c.y,food.x-c.x);else if(c.wander<=0){c.intent=c.angle+Math.sin(time*.7+c.id*13)*1.7;c.wander=1.5+Math.random()*2;}
   return {x:Math.cos(c.intent),y:Math.sin(c.intent),boost:false};
 }

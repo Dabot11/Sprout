@@ -30,7 +30,11 @@ export function widthAt(x:number,p:BodyProfile){
 export function profileMass(p:BodyProfile){return p.length*p.widths.reduce((n,w)=>n+w,0)/(2.45*(.32+.76+1+.81+.34));}
 export function localAngle(slot:number,angles?:number[]){return angles?.[slot]??DEFAULT_ANGLES[slot]??0;}
 export function bodyRadius(angle:number,shape=0,profile?:BodyProfile){
-  if(profile){const c=Math.cos(angle),s=Math.abs(Math.sin(angle));let lo=0,hi=Math.max(profile.length/2,...profile.widths)*1.02;for(let i=0;i<15;i++){const mid=(lo+hi)/2;if(Math.abs(mid*c)<profile.length/2&&mid*s<=widthAt(mid*c,profile))lo=mid;else hi=mid;}return (lo+hi)/2;}
+  if(profile){const c=Math.cos(angle),s=Math.abs(Math.sin(angle)),extent=Math.min(profile.length/2/(Math.abs(c)||1e-9),Math.max(...profile.widths)/(s||1e-9))*1.001;
+    // A sculpted neck can cross a ray more than once. Search from the outside,
+    // then refine the outer membrane instead of assuming a convex body.
+    let hi=extent,lo=0;for(let i=1;i<=64;i++){const d=extent*(1-i/64);if(d*s<=widthAt(d*c,profile)){lo=d;break;}hi=d;}
+    for(let i=0;i<15;i++){const mid=(lo+hi)/2;if(mid*s<=widthAt(mid*c,profile))lo=mid;else hi=mid;}return (lo+hi)/2;}
   const form=FORMS[shape%4],c=Math.cos(angle),s=Math.sin(angle);return 1/Math.sqrt((c/form.rx)**2+(s/form.ry)**2)*(1+.025*Math.cos(3*angle));
 }
 export function anchor(angle:number,r:number,shape=0,profile?:BodyProfile){const distance=bodyRadius(angle,shape,profile)*r*.97;return {x:Math.cos(angle)*distance,y:Math.sin(angle)*distance};}

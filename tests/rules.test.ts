@@ -5,6 +5,9 @@ import {attackAt,buy,canWin,compatible,copyRun,eat,grow,groupSlots,isSymmetric,m
 import {ContactTools,type ContactActor} from '../src/game/combat';
 import {clearRun,loadRun,saveRun,validRun,migrateRun} from '../src/game/storage';
 import {Spatial} from '../src/game/spatial';
+import {think} from '../src/game/ai';
+import {Feedback} from '../src/game/effects';
+import type {Creature} from '../src/game/creatures';
 import {fruitPosition} from '../src/game/plants';
 describe('Simetría obligatoria y conjuntos',()=>{
   it('coloca un órgano al frente o en la cola y dos en los lados',()=>{expect(placementAngles(.05)).toEqual([0]);expect(placementAngles(Math.PI-.04)).toEqual([Math.PI]);expect(placementAngles(-.7)).toEqual([.7,-.7]);});
@@ -76,3 +79,19 @@ describe('Guardado y migración',()=>{
   it('almacenamiento bloqueado no rompe la partida',()=>{vi.stubGlobal('localStorage',{getItem:()=>{throw Error('blocked');},setItem:()=>{throw Error('blocked');},removeItem:()=>{throw Error('blocked');}});expect(loadRun()).toBeNull();expect(saveRun(newRun())).toBe(false);expect(()=>clearRun()).not.toThrow();});
 });
 it('el índice espacial cubre los bordes de celda y excluye entidades lejanas',()=>{const grid=new Spatial<{x:number;y:number;id:number}>(100);grid.rebuild([{x:99,y:99,id:1},{x:101,y:101,id:2},{x:999,y:999,id:3}]);expect(grid.query(100,100,5).map(x=>x.id)).toEqual([1,2]);});
+describe('Regresiones de geometría y presentación',()=>{
+  it('ancla órganos en la membrana exterior de cuerpos con cuellos cóncavos',()=>{const p={length:3.6,knots:[-.8,-.4,0,.4,.8],widths:[1.116,.665,1.034,.1824,.679]},a=.4,d=bodyRadius(a,0,p);expect(d).toBeGreaterThan(1.65);expect(Math.sin(a)*d).toBeCloseTo(widthAt(Math.cos(a)*d,p),3);});
+  it('la boca recoge alimento en la apertura dibujada de la trompa',()=>{const r=newRun(),root=anchor(0,20,0,r.profile);expect(mouthAt(r.parts,0,0,0,20,{x:root.x+20*.62,y:0,kind:'algae',radius:1},r.angles,0,r.profile)).toBe(true);expect(mouthAt(r.parts,0,0,0,20,{x:root.x+20*.62,y:14,kind:'algae',radius:1},r.angles,0,r.profile)).toBe(false);});
+  it('el extremo visible del pincho hace daño sin exigir tocar la raíz',()=>{const r=newRun();r.parts[0]='spike';const root=anchor(0,20,0,r.profile);expect(attackAt(r.parts,0,0,0,20,{x:root.x+20*.86,y:0,radius:1},r.angles,0,r.profile)).toBe(BALANCE.spikeDamage);});
+  it('rechaza guardados con órganos superpuestos aunque parezcan simétricos',()=>{const r=newRun();r.parts[1]='gather';r.angles[1]=0;expect(validRun(r)).toBe(false);});
+});
+
+describe('Comportamientos y efectos acotados',()=>{
+  function npc(species:keyof typeof SPECIES,x=0,y=0):Creature {const spec=SPECIES[species],r=newRun();return {...r,...speciesLoadout(spec),id:1,x,y,angle:0,radius:20,vx:0,vy:0,species,health:100,maxHealth:100,rest:0,chase:0,charge:0,wander:0,intent:0,homeX:0,homeY:0,profile:spec.profile,eyes:spec.eyes} as unknown as Creature;}
+  it('la presa veloz huye en ráfagas con recarga',()=>{const prey=npc('dart'),hunter=npc('hunter',30);hunter.id=0;expect(think(prey,[hunter],[],hunter,.1,0).boost).toBe(true);expect(think(prey,[hunter],[],hunter,.1,1).boost).toBe(false);expect(think(prey,[hunter],[],hunter,.1,3.1).boost).toBe(true);});
+  it('los territoriales regresan a casa después de salir de su radio',()=>{const guard=npc('toxic',250),player=npc('moss',260);player.id=0;const intent=think(guard,[player],[],player,.1,1);expect(intent.x).toBeLessThan(0);expect(intent.boost).toBe(false);});
+  it('los cazadores descansan al superar el límite de persecución',()=>{const hunter=npc('hunter'),prey=npc('moss',110);prey.id=0;hunter.chase=4.95;think(hunter,[prey],[],prey,.1,10);expect(hunter.rest).toBe(4);expect(hunter.chase).toBe(0);});
+  it('ignoran la comida que no cabe en su boca',()=>{const c=npc('moss'),p=npc('moss',1000);p.id=0;const intent=think(c,[],[{x:10,y:0,radius:100,kind:'algae',active:true},{x:0,y:40,radius:4,kind:'algae',active:true}] as any,p,.1,1);expect(intent.y).toBeGreaterThan(.99);});
+  it('los efectos tienen límite y desaparecen tras su vida útil',()=>{const feedback=new Feedback({clear(){}} as any);for(let i=0;i<50;i++)feedback.burst('death',0,0,20);expect(feedback.count).toBeLessThanOrEqual(180);feedback.update(2);expect(feedback.count).toBe(0);feedback.reset();expect(feedback.count).toBe(0);});
+  it('la estela no acumula trabajo mientras la criatura está quieta',()=>{const feedback=new Feedback({clear(){}} as any);feedback.trail(0,0,20,0,0,600);feedback.trail(0,0,20,100,0,.05);expect(feedback.count).toBe(1);});
+});

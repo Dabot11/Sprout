@@ -19,6 +19,7 @@ export class ContactTools{
     }return events;
   }
   tick(actors:ContactActor[],time:number,dt:number){
+    for(const [key,last]of this.timers)if(time-last>Math.max(BALANCE.poisonCooldown,BALANCE.electricCooldown))this.timers.delete(key);
     const damage=new Map<number,number>();
     for(const actor of actors){if(actor.health<=0)continue;
       const intervals=this.clouds.filter(c=>c.owner!==actor.id&&Math.hypot(c.x-actor.x,c.y-actor.y)<c.radius+actor.radius*bodyRadius(Math.atan2(c.y-actor.y,c.x-actor.x)-actor.angle,actor.shape,actor.profile)).map(c=>[Math.max(time-dt,c.created),Math.min(time,c.expires)]).filter(([a,b])=>b>a).sort((a,b)=>a[0]-b[0]);

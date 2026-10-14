@@ -10,6 +10,7 @@ export function validRun(value:unknown):value is Run{
   if(!Number.isInteger(r.scale)||r.scale<0||r.scale>=BALANCE.scales.length)return false;
   if(!Array.isArray(r.parts)||r.parts.length!==ORGAN_SLOTS||r.parts.some(p=>p!==null&&!Object.hasOwn(PARTS,p))||usedCapacity(r.parts)>capacity(r.scale))return false;
   if(!Array.isArray(r.angles)||r.angles.length!==ORGAN_SLOTS||r.angles.some(a=>!Number.isFinite(a))||!isSymmetric(r.parts,r.angles))return false;
+  if(r.parts.some((p,i)=>p&&r.parts.some((q,j)=>q&&j>i&&Math.abs(Math.atan2(Math.sin(r.angles[i]-r.angles[j]),Math.cos(r.angles[i]-r.angles[j])))<1e-4)))return false;
   if(!Number.isInteger(r.shape)||r.shape<0||r.shape>3||!Number.isInteger(r.color)||r.color<0||r.color>0xffffff||!validProfile(r.profile)||!validEyes(r.eyes)||!Object.hasOwn(PATTERNS,r.pattern))return false;
   if(!r.parts.some(p=>p==='gather'||p==='jaw'||p==='filter'))return false;
   if(!r.inventory||Object.keys(PARTS).some(p=>!Number.isInteger(r.inventory[p as PartKind])||r.inventory[p as PartKind]<0||r.inventory[p as PartKind]>1000))return false;
